@@ -1,12 +1,14 @@
 package registry
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/docker/distribution"
 	digest "github.com/opencontainers/go-digest"
+	"github.com/pkg/errors"
 )
 
 func (registry *Registry) DownloadBlob(repository string, digest digest.Digest) (io.ReadCloser, error) {
@@ -19,6 +21,75 @@ func (registry *Registry) DownloadBlob(repository string, digest digest.Digest) 
 	}
 
 	return resp.Body, nil
+}
+
+// Following docker API specification for Chunked uploads : https://docs.docker.com/registry/spec/api/#listing-repositories
+// See UploadBlob for more info about getBody
+func (registry *Registry) UploadChunkedBlob(repository string, digest digest.Digest, content io.Reader, getBody func() (io.ReadCloser, error)) error {
+	uploadUrl, err := registry.initiateUpload(repository)
+	if err != nil {
+		return err
+	}
+
+	registry.Logf("registry.blob.chunkedUpload url=%s repository=%s digest=%s", uploadUrl, repository, digest)
+
+	upload, err := http.NewRequest("PATCH", uploadUrl.String(), content)
+	if err != nil {
+		return err
+	}
+	upload.Header.Set("Content-Type", "application/octet-stream")
+	if getBody != nil {
+		upload.GetBody = getBody
+	}
+
+	resp, err := registry.Client.Do(upload)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 202 {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		return errors.Errorf("retrieving %+v returned %v response: %s", uploadUrl, resp.Status, buf.String())
+	}
+	_ = resp.Body.Close()
+
+	return registry.completeChunkedUploadBlob(repository, digest, getBody, uploadUrl)
+}
+
+// Following docker API specification for Completing Chunked uploads: https://docs.docker.com/registry/spec/api/#listing-repositories
+// See UploadBlob for more info about getBody
+func (registry *Registry) completeChunkedUploadBlob(repository string, digest digest.Digest, getBody func() (io.ReadCloser, error), uploadUrl *url.URL) error {
+	q := uploadUrl.Query()
+	q.Set("digest", digest.String())
+	uploadUrl.RawQuery = q.Encode()
+
+	upload, err := http.NewRequest("PUT", uploadUrl.String(), nil) //sending zero length body
+
+	registry.Logf("registry.blob.completeChunkedUpload url=%s repository=%s digest=%s", uploadUrl, repository, digest)
+
+	if err != nil {
+		return err
+	}
+	upload.Header.Set("Content-Type", "application/octet-stream")
+	upload.Header.Set("Content-Range", "0-0")
+	upload.Header.Set("Content-Length", "0")
+	if getBody != nil {
+		upload.GetBody = getBody
+	}
+
+	resp, err := registry.Client.Do(upload)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 201 {
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		return errors.Errorf("retrieving %+v returned %v response: %s", uploadUrl, resp.Status, buf.String())
+	}
+
+	_ = resp.Body.Close()
+
+	return nil
 }
 
 // UploadBlob can be used to upload an FS layer or an image config file into the given repository.
