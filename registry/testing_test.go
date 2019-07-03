@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/docker/distribution"
+
 	"github.com/nokia/docker-registry-client/registry"
 	"github.com/opencontainers/go-digest"
 )
@@ -25,10 +26,11 @@ type Expected struct {
 
 // TestCase represents a test case (normally read from a test data file).
 type TestCase struct {
-	Url        string `json:"url"`
-	Repository string `json:"repository"`
-	Reference  string `json:"reference"`
-	Writeable  bool   `json:"writeable,omitempty"`
+	Url         string `json:"url"`
+	Repository  string `json:"repository"`
+	Reference   string `json:"reference"`
+	Writeable   bool   `json:"writeable,omitempty"`
+	Artifactory bool
 
 	registry.Options
 	registry *registry.Registry
@@ -98,6 +100,27 @@ func testCases(t *testing.T) []*TestCase {
 			Options: registry.Options{
 				Username: username,
 				Password: password,
+			},
+		}
+		_testCases = append(_testCases, tc)
+	}
+
+	//add testcase for Artifactory if credentials are given in environment variables
+	artifactoryUsername := os.Getenv("DRC_TEST_ARTIFACTORY_USERNAME")
+	artifactoryPassword := os.Getenv("DRC_TEST_ARTIFACTORY_PASSWORD")
+	artifactoryUrl := os.Getenv("DRC_TEST_ARTIFACTORY_REGISTRY")
+	artifactoryRepo := os.Getenv("DRC_TEST_ARTIFACTORY_REPO")
+	if artifactoryUsername != "" && artifactoryPassword != "" && artifactoryUrl != "" && artifactoryRepo != "" {
+		tc := &TestCase{
+			Url:         artifactoryUrl,
+			Repository:  artifactoryRepo,
+			Reference:   "latest",
+			Writeable:   true,
+			Artifactory: true,
+			Options: registry.Options{
+				Username:      username,
+				Password:      password,
+				DoInitialPing: false,
 			},
 		}
 		_testCases = append(_testCases, tc)

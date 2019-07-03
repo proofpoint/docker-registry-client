@@ -16,7 +16,13 @@ func TestRegistry_UploadBlob(t *testing.T) {
 
 	foreachWritableTestcase(t, func(t *testing.T, tc *TestCase) {
 		content := bytes.NewBuffer(blobData)
-		err := tc.Registry(t).UploadBlob(tc.Repository, digest, content, nil)
+		var err error
+		if !tc.Artifactory {
+			err = tc.Registry(t).UploadBlob(tc.Repository, digest, content, nil)
+		} else {
+			err = tc.Registry(t).UploadBlobToArtifactory(tc.Repository, digest, content, nil)
+		}
+
 		if err != nil {
 			t.Error("UploadBlob() failed:", err)
 		}
@@ -44,7 +50,12 @@ func TestRegistry_UploadBlobFromFile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = tc.Registry(t).UploadBlob(tc.Repository, digest, blobReader, body)
+		if !tc.Artifactory {
+			err = tc.Registry(t).UploadBlob(tc.Repository, digest, blobReader, body)
+		} else {
+			err = tc.Registry(t).UploadBlobToArtifactory(tc.Repository, digest, blobReader, body)
+		}
+
 		if err != nil {
 			t.Error("UploadBlob() failed:", err)
 		}
