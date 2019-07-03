@@ -1,14 +1,13 @@
 package registry
 
 import (
-	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/docker/distribution"
 	digest "github.com/opencontainers/go-digest"
-	"github.com/pkg/errors"
 )
 
 func (registry *Registry) DownloadBlob(repository string, digest digest.Digest) (io.ReadCloser, error) {
@@ -30,60 +29,49 @@ func (registry *Registry) UploadBlobToArtifactory(repository string, digest dige
 	if err != nil {
 		return err
 	}
-
-	registry.Logf("registry.blob.chunkedUpload url=%s repository=%s digest=%s", uploadUrl, repository, digest)
-
-	upload, err := http.NewRequest("PATCH", uploadUrl.String(), content)
-	if err != nil {
-		return err
-	}
-	upload.Header.Set("Content-Type", "application/octet-stream")
-	if getBody != nil {
-		upload.GetBody = getBody
-	}
-
-	resp, err := registry.Client.Do(upload)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != 202 {
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
-		return errors.Errorf("retrieving %+v returned %v response: %s", uploadUrl, resp.Status, buf.String())
-	}
-	_ = resp.Body.Close()
-
 	q := uploadUrl.Query()
 	q.Set("digest", digest.String())
 	uploadUrl.RawQuery = q.Encode()
 
-	upload, err = http.NewRequest("PUT", uploadUrl.String(), nil) //sending zero length body
+	registry.Logf("registry.blob.uploadToArtifactory url=%s repository=%s digest=%s", uploadUrl, repository, digest)
 
-	registry.Logf("registry.blob.completeChunkedUpload url=%s repository=%s digest=%s", uploadUrl, repository, digest)
-
+	uploadStep1, err := http.NewRequest("PATCH", uploadUrl.String(), content)
 	if err != nil {
 		return err
 	}
-	upload.Header.Set("Content-Type", "application/octet-stream")
-	upload.Header.Set("Content-Range", "0-0")
-	upload.Header.Set("Content-Length", "0")
+	uploadStep1.Header.Set("Content-Type", "application/octet-stream")
 	if getBody != nil {
-		upload.GetBody = getBody
+		uploadStep1.GetBody = getBody
+	}
+	resp1, err := registry.Client.Do(uploadStep1)
+	if resp1 != nil {
+		defer resp1.Body.Close()
+	}
+	// TODO: retry upload more than 0 bytes were successfully transferred
+	// (HEAD upload UUID, adn check the Range header)
+	if err != nil {
+		if resp1 == nil {
+			return fmt.Errorf("error while uploading blob to %s, digest: %s: %s", repository, digest, err)
+
+		} else {
+			return fmt.Errorf("error while uploading blob to %s: %v %v: digest: %s: %s", repository, resp1.StatusCode, resp1.Status, digest, err)
+		}
+	}
+	if resp1.StatusCode != 202 {
+		return fmt.Errorf("unexpected PATCH response while uploading blob to %s: %v %v: digest: %s", repository, resp1.StatusCode, resp1.Status, digest)
 	}
 
-	resp, err = registry.Client.Do(upload)
+	uploadStep2, err := http.NewRequest("PUT", uploadUrl.String(), nil)
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 201 {
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
-		return errors.Errorf("retrieving %+v returned %v response: %s", uploadUrl, resp.Status, buf.String())
+	uploadStep2.Header.Set("Content-Type", "application/octet-stream")
+	if getBody != nil {
+		uploadStep2.GetBody = getBody
 	}
 
-	_ = resp.Body.Close()
-
-	return nil
+	_, err = registry.Client.Do(uploadStep2)
+	return err
 }
 
 // UploadBlob can be used to upload an FS layer or an image config file into the given repository.
