@@ -23,9 +23,9 @@ func (registry *Registry) DownloadBlob(repository string, digest digest.Digest) 
 	return resp.Body, nil
 }
 
-// Following docker API specification for Chunked uploads : https://docs.docker.com/registry/spec/api/#listing-repositories
+// Sending Monolithic chunked upload - following docker API specification for Chunked uploads : https://docs.docker.com/registry/spec/api/#listing-repositories
 // See UploadBlob for more info about getBody
-func (registry *Registry) UploadChunkedBlob(repository string, digest digest.Digest, content io.Reader, getBody func() (io.ReadCloser, error)) error {
+func (registry *Registry) UploadBlobToArtifactory(repository string, digest digest.Digest, content io.Reader, getBody func() (io.ReadCloser, error)) error {
 	uploadUrl, err := registry.initiateUpload(repository)
 	if err != nil {
 		return err
@@ -53,17 +53,11 @@ func (registry *Registry) UploadChunkedBlob(repository string, digest digest.Dig
 	}
 	_ = resp.Body.Close()
 
-	return registry.completeChunkedUploadBlob(repository, digest, getBody, uploadUrl)
-}
-
-// Following docker API specification for Completing Chunked uploads: https://docs.docker.com/registry/spec/api/#listing-repositories
-// See UploadBlob for more info about getBody
-func (registry *Registry) completeChunkedUploadBlob(repository string, digest digest.Digest, getBody func() (io.ReadCloser, error), uploadUrl *url.URL) error {
 	q := uploadUrl.Query()
 	q.Set("digest", digest.String())
 	uploadUrl.RawQuery = q.Encode()
 
-	upload, err := http.NewRequest("PUT", uploadUrl.String(), nil) //sending zero length body
+	upload, err = http.NewRequest("PUT", uploadUrl.String(), nil) //sending zero length body
 
 	registry.Logf("registry.blob.completeChunkedUpload url=%s repository=%s digest=%s", uploadUrl, repository, digest)
 
@@ -77,7 +71,7 @@ func (registry *Registry) completeChunkedUploadBlob(repository string, digest di
 		upload.GetBody = getBody
 	}
 
-	resp, err := registry.Client.Do(upload)
+	resp, err = registry.Client.Do(upload)
 	if err != nil {
 		return err
 	}
